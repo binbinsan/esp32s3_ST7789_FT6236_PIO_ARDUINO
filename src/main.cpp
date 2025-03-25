@@ -19,6 +19,14 @@ lv_obj_t* wifi_page;        // WiFi信息页面
 lv_obj_t* wifi_info_label;  // WiFi详细信息标签
 bool is_wifi_page_shown = false;  // WiFi页面显示状态
 
+// 手势相关变量
+static lv_coord_t gesture_start_x = 0;  // 手势开始位置
+static uint32_t gesture_start_time = 0;  // 手势开始时间
+static bool gesture_tracking = false;    // 是否正在追踪手势
+static uint32_t last_page_switch = 0;   // 上次页面切换时间
+const uint32_t PAGE_SWITCH_DEBOUNCE = 500;  // 页面切换防抖时间(ms)
+const lv_coord_t GESTURE_THRESHOLD = 50;    // 手势触发阈值
+
 // GPIO相关变量
 const int GPIO_PIN_0 = 0;    // GPIO0引脚
 const int GPIO_PIN_1 = 1;    // GPIO1引脚
@@ -82,6 +90,7 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
     {
         data->state = LV_INDEV_STATE_REL;  // 未触摸状态
         isTouching = false;
+        gesture_tracking = false;  // 结束手势追踪
     }
     else
     {
@@ -89,45 +98,100 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
         isTouching = true;
 
         TS_Point p = ts.getPoint();
-       /* // 根据屏幕旋转调整坐标（假设屏幕旋转0度）
-        //data->point.x = screenWidth - p.y;  // 交换X/Y轴并镜像
-        //data->point.y = p.x;
-                et the coordinates*/
         data->point.x = p.x;
         data->point.y = p.y;
 
         // 打印触摸信息
         Serial.printf("Touch detected at X: %d, Y: %d\n", data->point.x, data->point.y);
     }
-    //按键1的检测区域是 X: 120, Y: 300//
-    //按键2的检测区域是 X: 240, Y: 300//
-    //按键3的检测区域是 X: 400, Y: 300//
-if (data->state == LV_INDEV_STATE_PR && 
-        data->point.y == 300)
+
+    // 按键检测逻辑
+    if (data->state == LV_INDEV_STATE_PR && data->point.y == 300)
     {
-        if (data->point.x == 120 )
+        if (data->point.x == 120)
         {
-            // 触摸按键1区域，切换12/24小时制
             use_24h_format = !use_24h_format;
             Serial.printf("Time format changed to %s\n", use_24h_format ? "24h" : "12h");
-            lv_timer_reset(update_timer);  // 立即更新时间显示
+            lv_timer_reset(update_timer);
         }
-        else if (data->point.x == 240 )
+        else if (data->point.x == 240)
         {
-            // 触摸按键2区域，切换日期显示
             show_date = !show_date;
             Serial.printf("Date display %s\n", show_date ? "enabled" : "disabled");
-            lv_timer_reset(update_timer);  // 立即更新时间显示
+            lv_timer_reset(update_timer);
         }
-        else if (data->point.x == 400 )
+        else if (data->point.x == 400)
         {
-            // 触摸按键3区域，执行其他操作
             Serial.println("Button 3 pressed");
         }
     }
 }
 
+// 页面切换动画回调函数
+static void page_switch_anim_cb(void * var, int32_t v)
+{
+    lv_obj_set_x((lv_obj_t *)var, v);
+}
 
+void update_wifi_details() {
+    if (!wifi_info_label) return;
+    
+    String wifi_details = String("SSID: ") + WiFi.SSID() + "\n";
+    wifi_details += "IP: " + WiFi.localIP().toString() + "\n";
+    wifi_details += "Gateway: " + WiFi.gatewayIP().toString() + "\n";
+    wifi_details += "Subnet: " + WiFi.subnetMask().toString() + "\n";
+    wifi_details += "DNS: " + WiFi.dnsIP().toString() + "\n";
+    wifi_details += "MAC: " + WiFi.macAddress() + "\n";
+    wifi_details += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+    wifi_details += "Channel: " + String(WiFi.channel()) + "\n";
+    
+    lv_label_set_text(wifi_info_label, wifi_details.c_str());
+}
+// 执行页面切换
+void switch_to_page(lv_obj_t* new_page, bool slide_left)
+{
+    uint32_t current_time = millis();
+    if (current_time - last_page_switch < PAGE_SWITCH_DEBOUNCE) {
+        return;  // 防抖：如果距离上次切换时间太短，则忽略本次切换
+    }
+    last_page_switch = current_time;
+
+    lv_obj_t* old_page = lv_scr_act();
+    
+    // 设置新页面的初始位置
+    lv_obj_set_x(new_page, slide_left ? screenWidth : -screenWidth);
+    
+    // 创建页面切换动画
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, new_page);
+    lv_anim_set_exec_cb(&a, page_switch_anim_cb);
+    lv_anim_set_values(&a, lv_obj_get_x(new_page), 0);
+    lv_anim_set_time(&a, 300);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    
+    // 创建旧页面的退出动画
+    lv_anim_t a_old;
+    lv_anim_init(&a_old);
+    lv_anim_set_var(&a_old, old_page);
+    lv_anim_set_exec_cb(&a_old, page_switch_anim_cb);
+    lv_anim_set_values(&a_old, 0, slide_left ? -screenWidth : screenWidth);
+    lv_anim_set_time(&a_old, 300);
+    lv_anim_set_path_cb(&a_old, lv_anim_path_ease_out);
+    
+    // 启动动画
+    lv_anim_start(&a);
+    lv_anim_start(&a_old);
+    
+    // 切换屏幕
+    lv_scr_load(new_page);
+    
+    // 更新状态
+    is_wifi_page_shown = (new_page == wifi_page);
+    if (is_wifi_page_shown) {
+        update_wifi_details();
+    }
+}
 
 // 创建时间标签，并添加触摸事件处理
 lv_obj_t* create_time_label()
@@ -303,8 +367,6 @@ void update_time(lv_timer_t *timer)
     }
 }
 
-
-
 // 更新WiFi信息，包括SSID和IP地址
 void update_wifi_info()
 {
@@ -365,20 +427,6 @@ void update_gpio_status(lv_timer_t* t)
 }
 
 // 更新WiFi详细信息
-void update_wifi_details() {
-    if (!wifi_info_label) return;
-    
-    String wifi_details = String("SSID: ") + WiFi.SSID() + "\n";
-    wifi_details += "IP: " + WiFi.localIP().toString() + "\n";
-    wifi_details += "Gateway: " + WiFi.gatewayIP().toString() + "\n";
-    wifi_details += "Subnet: " + WiFi.subnetMask().toString() + "\n";
-    wifi_details += "DNS: " + WiFi.dnsIP().toString() + "\n";
-    wifi_details += "MAC: " + WiFi.macAddress() + "\n";
-    wifi_details += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
-    wifi_details += "Channel: " + String(WiFi.channel()) + "\n";
-    
-    lv_label_set_text(wifi_info_label, wifi_details.c_str());
-}
 
 // 创建WiFi信息页面
 void create_wifi_page() {
@@ -423,13 +471,30 @@ void create_wifi_page() {
         lv_indev_t * indev = lv_indev_get_act();
         if(indev == NULL) return;
 
-        lv_point_t vect;
-        lv_indev_get_vect(indev, &vect);
-
-        // 检测右滑手势
-        if(vect.x > 50) {  // 如果水平移动距离大于50
-            lv_disp_load_scr(main_page);  // 切换回主页面
-            is_wifi_page_shown = false;
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        
+        // 如果是新的触摸开始，记录起始位置
+        if (!gesture_tracking) {
+            gesture_tracking = true;
+            gesture_start_x = point.x;
+            return;
+        }
+        
+        // 计算移动距离
+        lv_coord_t gesture_distance = point.x - gesture_start_x;
+        
+        // 只要移动距离超过阈值就触发切换
+        if (abs(gesture_distance) > GESTURE_THRESHOLD) {
+            if (gesture_distance < 0 && !is_wifi_page_shown) {
+                // 左滑切换到WiFi页面
+                switch_to_page(wifi_page, true);
+                gesture_tracking = false;  // 重置手势状态
+            } else if (gesture_distance > 0 && is_wifi_page_shown) {
+                // 右滑返回主页面
+                switch_to_page(main_page, false);
+                gesture_tracking = false;  // 重置手势状态
+            }
         }
     }, LV_EVENT_PRESSING, NULL);
 }
@@ -522,14 +587,30 @@ void setup()
         lv_indev_t * indev = lv_indev_get_act();
         if(indev == NULL) return;
 
-        lv_point_t vect;
-        lv_indev_get_vect(indev, &vect);
-
-        // 检测左滑手势
-        if(vect.x < -50 && !is_wifi_page_shown) {  // 如果水平移动距离小于-50
-            lv_disp_load_scr(wifi_page);  // 切换到WiFi页面
-            is_wifi_page_shown = true;
-            update_wifi_details();  // 更新WiFi信息
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        
+        // 如果是新的触摸开始，记录起始位置
+        if (!gesture_tracking) {
+            gesture_tracking = true;
+            gesture_start_x = point.x;
+            return;
+        }
+        
+        // 计算移动距离
+        lv_coord_t gesture_distance = point.x - gesture_start_x;
+        
+        // 只要移动距离超过阈值就触发切换
+        if (abs(gesture_distance) > GESTURE_THRESHOLD) {
+            if (gesture_distance < 0 && !is_wifi_page_shown) {
+                // 左滑切换到WiFi页面
+                switch_to_page(wifi_page, true);
+                gesture_tracking = false;  // 重置手势状态
+            } else if (gesture_distance > 0 && is_wifi_page_shown) {
+                // 右滑返回主页面
+                switch_to_page(main_page, false);
+                gesture_tracking = false;  // 重置手势状态
+            }
         }
     }, LV_EVENT_PRESSING, NULL);
 
@@ -588,8 +669,6 @@ void setup()
         mon.free_size,
         (float)mon.free_size / mon.total_size * 100);
 }
-
-
 
 // 主循环函数
 void loop()
