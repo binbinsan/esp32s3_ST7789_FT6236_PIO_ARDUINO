@@ -17,9 +17,12 @@ time_t last_sync_time = 0;   // 上次同步时间
 lv_obj_t* main_page;        // 主页面
 lv_obj_t* wifi_page;        // WiFi信息页面
 lv_obj_t* gpio_page;        // GPIO状态页面
+lv_obj_t* wifi_scan_page;   // WiFi扫描页面
 lv_obj_t* wifi_info_label;  // WiFi详细信息标签
+lv_obj_t* wifi_list_label;  // WiFi列表标签
 bool is_wifi_page_shown = false;  // WiFi页面显示状态
 bool is_gpio_page_shown = false;  // GPIO页面显示状态
+bool is_wifi_scan_page_shown = false;  // WiFi扫描页面显示状态
 
 // 手势相关变量
 static lv_coord_t gesture_start_x = 0;  // 手势开始位置
@@ -105,95 +108,62 @@ void update_wifi_details() {
 }
 
 // 执行页面切换
-void switch_to_page(lv_obj_t* new_page, bool slide_left)
-{
-    uint32_t current_time = millis();
-    if (current_time - last_page_switch < PAGE_SWITCH_DEBOUNCE) {
-        return;  // 防抖：如果距离上次切换时间太短，则忽略本次切换
-    }
-    last_page_switch = current_time;
-
-    lv_obj_t* old_page = lv_scr_act();
-    
-    // 设置新页面的初始位置
-    lv_obj_set_x(new_page, slide_left ? screenWidth : -screenWidth);
-    
-    // 创建页面切换动画
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, new_page);
-    lv_anim_set_exec_cb(&a, page_switch_anim_cb);
-    lv_anim_set_values(&a, lv_obj_get_x(new_page), 0);
-    lv_anim_set_time(&a, 300);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    
-    // 创建旧页面的退出动画
-    lv_anim_t a_old;
-    lv_anim_init(&a_old);
-    lv_anim_set_var(&a_old, old_page);
-    lv_anim_set_exec_cb(&a_old, page_switch_anim_cb);
-    lv_anim_set_values(&a_old, 0, slide_left ? -screenWidth : screenWidth);
-    lv_anim_set_time(&a_old, 300);
-    lv_anim_set_path_cb(&a_old, lv_anim_path_ease_out);
-    
-    // 启动动画
-    lv_anim_start(&a);
-    lv_anim_start(&a_old);
-    
-    // 切换屏幕
-    lv_scr_load(new_page);
+void switch_to_page(lv_obj_t* page, bool animate) {
+    if (lv_scr_act() == page) return;  // 如果目标页面已经是当前页面，则不执行切换
     
     // 更新状态
-    is_wifi_page_shown = (new_page == wifi_page);
-    is_gpio_page_shown = (new_page == gpio_page);
-
-    // 更新页面特定内容
-    if (is_wifi_page_shown) {
-        update_wifi_details();
+    is_wifi_page_shown = (page == wifi_page);
+    is_gpio_page_shown = (page == gpio_page);
+    is_wifi_scan_page_shown = (page == wifi_scan_page);
+    
+    if (animate) {
+        // 设置动画
+        lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_FADE_ON;
+        uint32_t time = 300;
+        uint32_t delay = 0;
+        
+        // 使用屏幕切换动画
+        lv_scr_load_anim(page, anim_type, time, delay, false);
+    } else {
+        lv_scr_load(page);
     }
 }
 // 触摸屏读取回调函数，用于处理触摸事件
-void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
-{
-    if (!ts.touched())
-    {
-        data->state = LV_INDEV_STATE_REL;  // 未触摸状态
-        isTouching = false;
-        gesture_tracking = false;  // 结束手势追踪
+void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
+    if (!ts.touched()) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
     }
-    else
-    {
-        data->state = LV_INDEV_STATE_PR;  // 触摸状态
-        isTouching = true;
-
-        TS_Point p = ts.getPoint();
-        data->point.x = p.x;
-        data->point.y = p.y;
-
-        // 打印触摸信息
-        Serial.printf("Touch detected at X: %d, Y: %d\n", data->point.x, data->point.y);
-    }
-
-    // 按键检测逻辑
-    if (data->state == LV_INDEV_STATE_PR && data->point.y == 300)
-    {
-        if (data->point.x == 120)
-        {
+    
+    data->state = LV_INDEV_STATE_PR;
+    
+    // Get touch point
+    TS_Point p = ts.getPoint();
+    data->point.x = p.x;
+    data->point.y = p.y;
+    
+    if (data->point.x == 120) {
+        // 切换到WiFi页面
+        if (!is_wifi_page_shown) {
+            //switch_to_page(wifi_page, true);
+           // Serial.println("Switching to wifi page");
             use_24h_format = !use_24h_format;
             Serial.printf("Time format changed to %s\n", use_24h_format ? "24h" : "12h");
             lv_timer_reset(update_timer);
         }
-        else if (data->point.x == 240)
-        {
-            // 切换到主页面
-            if (is_wifi_page_shown || is_gpio_page_shown) {
-                switch_to_page(main_page, false);
-                Serial.println("Switching to main page");
-            }
+    }
+    else if (data->point.x == 240) {
+        // 切换到主页面
+        if (is_wifi_page_shown || is_gpio_page_shown || is_wifi_scan_page_shown) {
+            switch_to_page(main_page, false);
+            Serial.println("Switching to main page");
         }
-        else if (data->point.x == 400)
-        {
-            Serial.println("Button 3 pressed");
+    }
+    else if (data->point.x == 400) {
+        // 切换到WiFi扫描页面
+        if (!is_wifi_scan_page_shown) {
+            switch_to_page(wifi_scan_page, true);
+            Serial.println("Switching to wifi scan page");
         }
     }
 }
@@ -580,6 +550,102 @@ void create_gpio_page() {
     }, LV_EVENT_PRESSING, NULL);
 }
 
+// WiFi扫描回调函数
+static void scan_wifi_cb(lv_event_t * e) {
+    Serial.println("Starting WiFi scan...");
+    int n = WiFi.scanNetworks();
+    String wifi_list = "";
+    
+    if (n == 0) {
+        wifi_list = "No networks found\n";
+    } else {
+        wifi_list = String(n) + " networks found:\n\n";
+        for (int i = 0; i < n; ++i) {
+            wifi_list += String(i + 1) + ": ";
+            wifi_list += WiFi.SSID(i) + " (";
+            wifi_list += WiFi.RSSI(i) + "dBm) ";
+            wifi_list += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "Open" : "Encrypted";
+            wifi_list += "\n";
+        }
+    }
+    
+    lv_label_set_text(wifi_list_label, wifi_list.c_str());
+}
+
+// 创建WiFi扫描页面
+void create_wifi_scan_page() {
+    wifi_scan_page = lv_obj_create(NULL);
+    lv_obj_set_size(wifi_scan_page, screenWidth, screenHeight);
+    lv_obj_set_style_bg_color(wifi_scan_page, lv_color_black(), 0);
+    
+    // 创建标题
+    lv_obj_t* title = lv_label_create(wifi_scan_page);
+    lv_label_set_text(title, "WiFi Scanner");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // 创建扫描按钮
+    lv_obj_t* scan_btn = lv_btn_create(wifi_scan_page);
+    lv_obj_set_size(scan_btn, 100, 40);
+    lv_obj_align(scan_btn, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_add_event_cb(scan_btn, scan_wifi_cb, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t* scan_label = lv_label_create(scan_btn);
+    lv_label_set_text(scan_label, "SCAN");
+    lv_obj_center(scan_label);
+    
+    // 创建WiFi列表标签
+    wifi_list_label = lv_label_create(wifi_scan_page);
+    lv_obj_set_style_text_font(wifi_list_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(wifi_list_label, lv_color_white(), 0);
+    lv_label_set_text(wifi_list_label, "Press SCAN to search for networks...");
+    lv_obj_align(wifi_list_label, LV_ALIGN_TOP_LEFT, 10, 100);
+    
+    // 创建导航提示
+    lv_obj_t* hint = lv_label_create(wifi_scan_page);
+    lv_label_set_text(hint, "← Swipe right to return");
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(hint, lv_color_white(), 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+    
+    // 添加滑动手势
+    static lv_style_t style_trans;
+    lv_style_init(&style_trans);
+    lv_style_set_bg_opa(&style_trans, LV_OPA_TRANSP);
+    
+    lv_obj_t* gesture_obj = lv_obj_create(wifi_scan_page);
+    lv_obj_remove_style_all(gesture_obj);
+    lv_obj_add_style(gesture_obj, &style_trans, 0);
+    lv_obj_set_size(gesture_obj, screenWidth, screenHeight);
+    lv_obj_align(gesture_obj, LV_ALIGN_CENTER, 0, 0);
+    
+    lv_obj_add_event_cb(gesture_obj, [](lv_event_t * e) {
+        lv_obj_t * obj = lv_event_get_target(e);
+        lv_indev_t * indev = lv_indev_get_act();
+        if(indev == NULL) return;
+
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        
+        if (!gesture_tracking) {
+            gesture_tracking = true;
+            gesture_start_x = point.x;
+            return;
+        }
+        
+        lv_coord_t gesture_distance = point.x - gesture_start_x;
+        
+        if (abs(gesture_distance) > GESTURE_THRESHOLD) {
+            if (gesture_distance > 0 && is_wifi_scan_page_shown) {
+                // 右滑返回主页面
+                switch_to_page(main_page, false);
+                gesture_tracking = false;
+            }
+        }
+    }, LV_EVENT_PRESSING, NULL);
+}
+
 // 初始化函数
 void setup()
 {
@@ -649,6 +715,9 @@ void setup()
 
     // 创建GPIO状态页面
     create_gpio_page();
+
+    // 创建WiFi扫描页面
+    create_wifi_scan_page();
 
     // 创建界面
     date_label = create_time_label();
