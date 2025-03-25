@@ -824,23 +824,16 @@ void setup()
 {
     Serial.begin(115200);
 
-    // 初始化GPIO引脚
-    pinMode(GPIO_PIN_0, INPUT_PULLDOWN);
-    pinMode(GPIO_PIN_1, INPUT_PULLDOWN);
-
+    // 初始化显示相关
     lv_init();
-
-#if LV_USE_LOG != 0
-    lv_log_register_print_cb(my_print);
-#endif
-
     tft.begin();
     tft.setRotation(0);
     tft.fillScreen(TFT_BLACK);
 
+    // 初始化显示缓冲区
     lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 20);
-    Serial.printf("Display buffer initialized, size: %d\n", screenWidth * 20);
 
+    // 初始化显示驱动
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = screenWidth;
@@ -849,24 +842,37 @@ void setup()
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
 
+    // 初始化触摸驱动
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
 
-    // 创建并显示启动页面
-    create_boot_page();
+    // 立即创建并显示启动页面
+    create_boot_page("Starting system...");
+    lv_timer_handler();  // 强制更新显示
+
+    // 初始化GPIO引脚
+    pinMode(GPIO_PIN_0, INPUT_PULLDOWN);
+    pinMode(GPIO_PIN_1, INPUT_PULLDOWN);
+
+#if LV_USE_LOG != 0
+    lv_log_register_print_cb(my_print);
+#endif
     
     // 初始化触摸屏
     update_boot_status("Initializing touch screen...");
+    lv_timer_handler();
     if (!ts.begin(40,3,2)) {
         update_boot_status("Touch screen init failed!");
+        lv_timer_handler();
         delay(2000);
     }
 
     // WiFi连接
     update_boot_status("Connecting to WiFi...");
+    lv_timer_handler();
     WiFi.mode(WIFI_STA);
     WiFiManager wm;
     bool res;
@@ -874,27 +880,33 @@ void setup()
     
     if (!res) {
         update_boot_status("Failed to connect WiFi!");
+        lv_timer_handler();
         delay(2000);
         ESP.restart();
     }
     update_boot_status("WiFi connected successfully!");
+    lv_timer_handler();
 
     // 时间服务
     update_boot_status("Syncing time...");
+    lv_timer_handler();
     timeClient.begin();
     timeClient.forceUpdate();
 
     // 初始化SHT30
     update_boot_status("Initializing sensors...");
+    lv_timer_handler();
     Wire.begin();
     bool sht31_found = sht31.begin(0x45);
     if (!sht31_found) {
         update_boot_status("SHT30 sensor not found!");
+        lv_timer_handler();
         delay(1000);
     }
 
     // 创建所有页面
     update_boot_status("Creating interface...");
+    lv_timer_handler();
     
     // 创建主页面
     main_page = lv_obj_create(NULL);
@@ -936,6 +948,7 @@ void setup()
     
     // 启动完成，切换到主页面
     update_boot_status("Starting system...");
+    lv_timer_handler();
     delay(500);
     lv_scr_load_anim(main_page, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
 
@@ -958,13 +971,6 @@ void setup()
             update_wifi_details();
         }
     }, 5000, NULL);
-
-    // 内存监控
-    lv_mem_monitor_t mon;
-    lv_mem_monitor(&mon);
-    Serial.printf("Free memory: %d bytes (%.1f%%)\n",
-        mon.free_size,
-        (float)mon.free_size / mon.total_size * 100);
 }
 
 // 主循环函数
