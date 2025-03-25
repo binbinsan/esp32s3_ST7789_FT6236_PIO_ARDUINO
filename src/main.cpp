@@ -16,8 +16,10 @@ time_t last_sync_time = 0;   // 上次同步时间
 // 页面相关变量
 lv_obj_t* main_page;        // 主页面
 lv_obj_t* wifi_page;        // WiFi信息页面
+lv_obj_t* gpio_page;        // GPIO状态页面
 lv_obj_t* wifi_info_label;  // WiFi详细信息标签
 bool is_wifi_page_shown = false;  // WiFi页面显示状态
+bool is_gpio_page_shown = false;  // GPIO页面显示状态
 
 // 手势相关变量
 static lv_coord_t gesture_start_x = 0;  // 手势开始位置
@@ -188,6 +190,9 @@ void switch_to_page(lv_obj_t* new_page, bool slide_left)
     
     // 更新状态
     is_wifi_page_shown = (new_page == wifi_page);
+    is_gpio_page_shown = (new_page == gpio_page);
+
+    // 更新页面特定内容
     if (is_wifi_page_shown) {
         update_wifi_details();
     }
@@ -417,12 +422,12 @@ void update_gpio_status(lv_timer_t* t)
 
     // 更新GPIO0标签
     char gpio0_str[20];
-    snprintf(gpio0_str, sizeof(gpio0_str), "GPIO0: %s", gpio0_state == HIGH ? "HIGH" : "LOW");
+    snprintf(gpio0_str, sizeof(gpio0_str), "GPIO0: %s", gpio0_state ==1 ? "1" : "0");
     lv_label_set_text(gpio0_label, gpio0_str);
 
     // 更新GPIO1标签
     char gpio1_str[20];
-    snprintf(gpio1_str, sizeof(gpio1_str), "GPIO1: %s", gpio1_state == HIGH ? "HIGH" : "LOW");
+    snprintf(gpio1_str, sizeof(gpio1_str), "GPIO1: %s", gpio1_state == 1 ? "1" : "0");
     lv_label_set_text(gpio1_label, gpio1_str);
 }
 
@@ -499,6 +504,80 @@ void create_wifi_page() {
     }, LV_EVENT_PRESSING, NULL);
 }
 
+// 创建GPIO状态页面
+void create_gpio_page() {
+    gpio_page = lv_obj_create(NULL);
+    lv_obj_set_size(gpio_page, screenWidth, screenHeight);
+    lv_obj_set_style_bg_color(gpio_page, lv_color_black(), 0);
+    
+    // 创建标题
+    lv_obj_t* title = lv_label_create(gpio_page);
+    lv_label_set_text(title, "GPIO Status");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // 创建GPIO状态标签
+    gpio0_label = lv_label_create(gpio_page);
+    lv_label_set_text(gpio0_label, "GPIO0: --");
+    lv_obj_set_style_text_font(gpio0_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(gpio0_label, lv_color_white(), 0);
+    lv_obj_align(gpio0_label, LV_ALIGN_CENTER, 0, -30);
+
+    gpio1_label = lv_label_create(gpio_page);
+    lv_label_set_text(gpio1_label, "GPIO1: --");
+    lv_obj_set_style_text_font(gpio1_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(gpio1_label, lv_color_white(), 0);
+    lv_obj_align(gpio1_label, LV_ALIGN_CENTER, 0, 30);
+    
+    // 创建导航提示
+    lv_obj_t* hint = lv_label_create(gpio_page);
+    lv_label_set_text(hint, "← Swipe to navigate →");
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(hint, lv_color_white(), 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+    
+    // 添加滑动手势
+    static lv_style_t style_trans;
+    lv_style_init(&style_trans);
+    lv_style_set_bg_opa(&style_trans, LV_OPA_TRANSP);
+    
+    lv_obj_t* gesture_obj = lv_obj_create(gpio_page);
+    lv_obj_remove_style_all(gesture_obj);
+    lv_obj_add_style(gesture_obj, &style_trans, 0);
+    lv_obj_set_size(gesture_obj, screenWidth, screenHeight);
+    lv_obj_align(gesture_obj, LV_ALIGN_CENTER, 0, 0);
+    
+    lv_obj_add_event_cb(gesture_obj, [](lv_event_t * e) {
+        lv_obj_t * obj = lv_event_get_target(e);
+        lv_indev_t * indev = lv_indev_get_act();
+        if(indev == NULL) return;
+
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        
+        if (!gesture_tracking) {
+            gesture_tracking = true;
+            gesture_start_x = point.x;
+            return;
+        }
+        
+        lv_coord_t gesture_distance = point.x - gesture_start_x;
+        
+        if (abs(gesture_distance) > GESTURE_THRESHOLD) {
+            if (gesture_distance < 0 && is_gpio_page_shown) {
+                // 左滑切换到WiFi页面
+                switch_to_page(wifi_page, true);
+                gesture_tracking = false;
+            } else if (gesture_distance > 0) {
+                // 右滑返回主页面
+                switch_to_page(main_page, false);
+                gesture_tracking = false;
+            }
+        }
+    }, LV_EVENT_PRESSING, NULL);
+}
+
 // 初始化函数
 void setup()
 {
@@ -566,6 +645,9 @@ void setup()
     // 创建WiFi信息页面
     create_wifi_page();
 
+    // 创建GPIO状态页面
+    create_gpio_page();
+
     // 创建界面
     date_label = create_time_label();
     create_status_bar();
@@ -590,26 +672,33 @@ void setup()
         lv_point_t point;
         lv_indev_get_point(indev, &point);
         
-        // 如果是新的触摸开始，记录起始位置
         if (!gesture_tracking) {
             gesture_tracking = true;
             gesture_start_x = point.x;
             return;
         }
         
-        // 计算移动距离
         lv_coord_t gesture_distance = point.x - gesture_start_x;
         
-        // 只要移动距离超过阈值就触发切换
         if (abs(gesture_distance) > GESTURE_THRESHOLD) {
-            if (gesture_distance < 0 && !is_wifi_page_shown) {
-                // 左滑切换到WiFi页面
-                switch_to_page(wifi_page, true);
-                gesture_tracking = false;  // 重置手势状态
-            } else if (gesture_distance > 0 && is_wifi_page_shown) {
-                // 右滑返回主页面
-                switch_to_page(main_page, false);
-                gesture_tracking = false;  // 重置手势状态
+            if (gesture_distance < 0) {
+                if (!is_wifi_page_shown && !is_gpio_page_shown) {
+                    // 主页面左滑 -> GPIO页面
+                    switch_to_page(gpio_page, true);
+                } else if (is_gpio_page_shown) {
+                    // GPIO页面左滑 -> WiFi页面
+                    switch_to_page(wifi_page, true);
+                }
+                gesture_tracking = false;
+            } else if (gesture_distance > 0) {
+                if (is_wifi_page_shown) {
+                    // WiFi页面右滑 -> GPIO页面
+                    switch_to_page(gpio_page, false);
+                } else if (is_gpio_page_shown) {
+                    // GPIO页面右滑 -> 主页面
+                    switch_to_page(main_page, false);
+                }
+                gesture_tracking = false;
             }
         }
     }, LV_EVENT_PRESSING, NULL);
@@ -628,19 +717,6 @@ void setup()
         lv_obj_set_style_text_color(humi_label, lv_color_white(), 0);
         lv_obj_align_to(humi_label, temp_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
     }
-
-    // 创建GPIO状态标签
-    gpio0_label = lv_label_create(main_page);
-    lv_label_set_text(gpio0_label, "GPIO0: --");
-    lv_obj_set_style_text_font(gpio0_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(gpio0_label, lv_color_white(), 0);
-    lv_obj_align(gpio0_label, LV_ALIGN_TOP_RIGHT, -20, 120);
-
-    gpio1_label = lv_label_create(main_page);
-    lv_label_set_text(gpio1_label, "GPIO1: --");
-    lv_obj_set_style_text_font(gpio1_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(gpio1_label, lv_color_white(), 0);
-    lv_obj_align_to(gpio1_label, gpio0_label, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 5);
 
     // 创建定时器
     update_timer = lv_timer_create(update_time, 1000, NULL);
