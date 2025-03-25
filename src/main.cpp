@@ -84,57 +84,11 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
 
     lv_disp_flush_ready(disp);
 }
-
-// 触摸屏读取回调函数，用于处理触摸事件
-void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
-{
-    if (!ts.touched())
-    {
-        data->state = LV_INDEV_STATE_REL;  // 未触摸状态
-        isTouching = false;
-        gesture_tracking = false;  // 结束手势追踪
-    }
-    else
-    {
-        data->state = LV_INDEV_STATE_PR;  // 触摸状态
-        isTouching = true;
-
-        TS_Point p = ts.getPoint();
-        data->point.x = p.x;
-        data->point.y = p.y;
-
-        // 打印触摸信息
-        Serial.printf("Touch detected at X: %d, Y: %d\n", data->point.x, data->point.y);
-    }
-
-    // 按键检测逻辑
-    if (data->state == LV_INDEV_STATE_PR && data->point.y == 300)
-    {
-        if (data->point.x == 120)
-        {
-            use_24h_format = !use_24h_format;
-            Serial.printf("Time format changed to %s\n", use_24h_format ? "24h" : "12h");
-            lv_timer_reset(update_timer);
-        }
-        else if (data->point.x == 240)
-        {
-            show_date = !show_date;
-            Serial.printf("Date display %s\n", show_date ? "enabled" : "disabled");
-            lv_timer_reset(update_timer);
-        }
-        else if (data->point.x == 400)
-        {
-            Serial.println("Button 3 pressed");
-        }
-    }
-}
-
 // 页面切换动画回调函数
 static void page_switch_anim_cb(void * var, int32_t v)
 {
     lv_obj_set_x((lv_obj_t *)var, v);
 }
-
 void update_wifi_details() {
     if (!wifi_info_label) return;
     
@@ -149,6 +103,7 @@ void update_wifi_details() {
     
     lv_label_set_text(wifi_info_label, wifi_details.c_str());
 }
+
 // 执行页面切换
 void switch_to_page(lv_obj_t* new_page, bool slide_left)
 {
@@ -197,6 +152,53 @@ void switch_to_page(lv_obj_t* new_page, bool slide_left)
         update_wifi_details();
     }
 }
+// 触摸屏读取回调函数，用于处理触摸事件
+void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
+{
+    if (!ts.touched())
+    {
+        data->state = LV_INDEV_STATE_REL;  // 未触摸状态
+        isTouching = false;
+        gesture_tracking = false;  // 结束手势追踪
+    }
+    else
+    {
+        data->state = LV_INDEV_STATE_PR;  // 触摸状态
+        isTouching = true;
+
+        TS_Point p = ts.getPoint();
+        data->point.x = p.x;
+        data->point.y = p.y;
+
+        // 打印触摸信息
+        Serial.printf("Touch detected at X: %d, Y: %d\n", data->point.x, data->point.y);
+    }
+
+    // 按键检测逻辑
+    if (data->state == LV_INDEV_STATE_PR && data->point.y == 300)
+    {
+        if (data->point.x == 120)
+        {
+            use_24h_format = !use_24h_format;
+            Serial.printf("Time format changed to %s\n", use_24h_format ? "24h" : "12h");
+            lv_timer_reset(update_timer);
+        }
+        else if (data->point.x == 240)
+        {
+            // 切换到主页面
+            if (is_wifi_page_shown || is_gpio_page_shown) {
+                switch_to_page(main_page, false);
+                Serial.println("Switching to main page");
+            }
+        }
+        else if (data->point.x == 400)
+        {
+            Serial.println("Button 3 pressed");
+        }
+    }
+}
+
+
 
 // 创建时间标签，并添加触摸事件处理
 lv_obj_t* create_time_label()
