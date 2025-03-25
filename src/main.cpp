@@ -13,8 +13,21 @@ bool use_24h_format = true;  // 默认使用24小时制
 bool show_date = true;       // 默认显示日期
 time_t last_sync_time = 0;   // 上次同步时间
 
+// 页面相关变量
+lv_obj_t* main_page;        // 主页面
+lv_obj_t* wifi_page;        // WiFi信息页面
+lv_obj_t* wifi_info_label;  // WiFi详细信息标签
+bool is_wifi_page_shown = false;  // WiFi页面显示状态
+
+// GPIO相关变量
+const int GPIO_PIN_0 = 0;    // GPIO0引脚
+const int GPIO_PIN_1 = 1;    // GPIO1引脚
+lv_obj_t* gpio0_label;      // GPIO0状态标签
+lv_obj_t* gpio1_label;      // GPIO1状态标签
+
 // 函数声明
 void update_temp_humi(lv_timer_t* t);
+void update_gpio_status(lv_timer_t* t);  // 新增GPIO状态更新函数声明
 
 FT6236 ts = FT6236();  // 触摸屏对象
 Adafruit_SHT31 sht31 = Adafruit_SHT31();  // 温湿度传感器对象
@@ -124,7 +137,7 @@ lv_obj_t* create_time_label()
                          LV_THEME_DEFAULT_DARK, &lv_font_montserrat_16);
 
     // 创建日期标签
-    lv_obj_t* date_label = lv_label_create(lv_scr_act());
+    lv_obj_t* date_label = lv_label_create(main_page);  // 改为main_page
     lv_label_set_text(date_label, "2025-03-24");
     lv_obj_set_style_text_font(date_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(date_label, lv_color_white(), 0);
@@ -132,7 +145,7 @@ lv_obj_t* create_time_label()
     lv_obj_align(date_label, LV_ALIGN_TOP_MID, 0, 20);
 
     // 创建时间标签
-    lv_obj_t* label = lv_label_create(lv_scr_act());
+    lv_obj_t* label = lv_label_create(main_page);  // 改为main_page
     lv_label_set_text(label, "00:00:00");
     lv_obj_set_style_text_font(label, &lv_font_montserrat_48, 0);
     
@@ -183,12 +196,12 @@ lv_obj_t* create_time_label()
     time_label = label;
 
     // 创建AM/PM标签
-    ampm_label = lv_label_create(lv_scr_act());
+    ampm_label = lv_label_create(main_page);  // 改为main_page
     lv_label_set_text(ampm_label, "");
-    lv_obj_set_style_text_font(ampm_label, &lv_font_montserrat_16, 0);  // 设置AM/PM字体
+    lv_obj_set_style_text_font(ampm_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(ampm_label, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(ampm_label, LV_OPA_TRANSP, 0);
-    lv_obj_align_to(ampm_label, time_label, LV_ALIGN_OUT_RIGHT_MID, -20, 20);  // 对齐到时间标签的右侧
+    lv_obj_align_to(ampm_label, time_label, LV_ALIGN_OUT_RIGHT_MID, -20, 20);
 
     return date_label;
 }
@@ -197,7 +210,7 @@ lv_obj_t* create_time_label()
 lv_obj_t* create_status_bar()
 {
     // 创建状态栏对象
-    lv_obj_t* status_bar = lv_obj_create(lv_scr_act());
+    lv_obj_t* status_bar = lv_obj_create(main_page);  // 改为main_page
     lv_obj_set_size(status_bar, screenWidth, 30);  // 设置状态栏的宽度和高度
     
     // 设置状态栏样式
@@ -332,10 +345,103 @@ void update_temp_humi(lv_timer_t* t)
         lv_label_set_text(humi_label, humiStr);
     }
 }
+
+// 新增GPIO状态更新函数
+void update_gpio_status(lv_timer_t* t)
+{
+    // 读取GPIO状态
+    int gpio0_state = digitalRead(GPIO_PIN_0);
+    int gpio1_state = digitalRead(GPIO_PIN_1);
+
+    // 更新GPIO0标签
+    char gpio0_str[20];
+    snprintf(gpio0_str, sizeof(gpio0_str), "GPIO0: %s", gpio0_state == HIGH ? "HIGH" : "LOW");
+    lv_label_set_text(gpio0_label, gpio0_str);
+
+    // 更新GPIO1标签
+    char gpio1_str[20];
+    snprintf(gpio1_str, sizeof(gpio1_str), "GPIO1: %s", gpio1_state == HIGH ? "HIGH" : "LOW");
+    lv_label_set_text(gpio1_label, gpio1_str);
+}
+
+// 更新WiFi详细信息
+void update_wifi_details() {
+    if (!wifi_info_label) return;
+    
+    String wifi_details = String("SSID: ") + WiFi.SSID() + "\n";
+    wifi_details += "IP: " + WiFi.localIP().toString() + "\n";
+    wifi_details += "Gateway: " + WiFi.gatewayIP().toString() + "\n";
+    wifi_details += "Subnet: " + WiFi.subnetMask().toString() + "\n";
+    wifi_details += "DNS: " + WiFi.dnsIP().toString() + "\n";
+    wifi_details += "MAC: " + WiFi.macAddress() + "\n";
+    wifi_details += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+    wifi_details += "Channel: " + String(WiFi.channel()) + "\n";
+    
+    lv_label_set_text(wifi_info_label, wifi_details.c_str());
+}
+
+// 创建WiFi信息页面
+void create_wifi_page() {
+    wifi_page = lv_obj_create(NULL);
+    lv_obj_set_size(wifi_page, screenWidth, screenHeight);
+    lv_obj_set_style_bg_color(wifi_page, lv_color_black(), 0);
+    
+    // 创建标题
+    lv_obj_t* title = lv_label_create(wifi_page);
+    lv_label_set_text(title, "WiFi Information");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // 创建WiFi信息标签
+    wifi_info_label = lv_label_create(wifi_page);
+    lv_obj_set_style_text_font(wifi_info_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(wifi_info_label, lv_color_white(), 0);
+    lv_label_set_text(wifi_info_label, "Loading WiFi info...");
+    lv_obj_align(wifi_info_label, LV_ALIGN_TOP_LEFT, 10, 50);
+    
+    // 创建返回提示
+    lv_obj_t* hint = lv_label_create(wifi_page);
+    lv_label_set_text(hint, "← Swipe right to return");
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(hint, lv_color_white(), 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+    
+    // 添加滑动手势
+    static lv_style_t style_trans;
+    lv_style_init(&style_trans);
+    lv_style_set_bg_opa(&style_trans, LV_OPA_TRANSP);
+    
+    lv_obj_t* gesture_obj = lv_obj_create(wifi_page);
+    lv_obj_remove_style_all(gesture_obj);
+    lv_obj_add_style(gesture_obj, &style_trans, 0);
+    lv_obj_set_size(gesture_obj, screenWidth, screenHeight);
+    lv_obj_align(gesture_obj, LV_ALIGN_CENTER, 0, 0);
+    
+    lv_obj_add_event_cb(gesture_obj, [](lv_event_t * e) {
+        lv_obj_t * obj = lv_event_get_target(e);
+        lv_indev_t * indev = lv_indev_get_act();
+        if(indev == NULL) return;
+
+        lv_point_t vect;
+        lv_indev_get_vect(indev, &vect);
+
+        // 检测右滑手势
+        if(vect.x > 50) {  // 如果水平移动距离大于50
+            lv_disp_load_scr(main_page);  // 切换回主页面
+            is_wifi_page_shown = false;
+        }
+    }, LV_EVENT_PRESSING, NULL);
+}
+
 // 初始化函数
 void setup()
 {
     Serial.begin(115200);
+
+    // 初始化GPIO引脚
+    pinMode(GPIO_PIN_0, INPUT_PULLUP);
+    pinMode(GPIO_PIN_1, INPUT_PULLUP);
 
     lv_init();
 
@@ -348,7 +454,7 @@ void setup()
     tft.fillScreen(TFT_BLACK);
 
     lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 20);
-    Serial.printf("Display buffer initialized, size: %d\n", screenWidth * 20);  // 添加调试信息
+    Serial.printf("Display buffer initialized, size: %d\n", screenWidth * 20);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
@@ -364,7 +470,7 @@ void setup()
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
 
-    if (!ts.begin(40,3,2)) { // 确认I2C引脚配置正确
+    if (!ts.begin(40,3,2)) {
         Serial.println("Touchscreen init failed!");
     }
 
@@ -387,38 +493,93 @@ void setup()
         Serial.println("Couldn't find SHT30");
     }
 
+    // 创建主页面
+    main_page = lv_obj_create(NULL);
+    lv_obj_set_size(main_page, screenWidth, screenHeight);
+    lv_disp_load_scr(main_page);
+
+    // 创建WiFi信息页面
+    create_wifi_page();
+
     // 创建界面
     date_label = create_time_label();
     create_status_bar();
     update_wifi_info();
 
+    // 添加左滑手势检测
+    static lv_style_t style_trans;
+    lv_style_init(&style_trans);
+    lv_style_set_bg_opa(&style_trans, LV_OPA_TRANSP);
+    
+    lv_obj_t* gesture_obj = lv_obj_create(main_page);
+    lv_obj_remove_style_all(gesture_obj);
+    lv_obj_add_style(gesture_obj, &style_trans, 0);
+    lv_obj_set_size(gesture_obj, screenWidth, screenHeight);
+    lv_obj_align(gesture_obj, LV_ALIGN_CENTER, 0, 0);
+    
+    lv_obj_add_event_cb(gesture_obj, [](lv_event_t * e) {
+        lv_obj_t * obj = lv_event_get_target(e);
+        lv_indev_t * indev = lv_indev_get_act();
+        if(indev == NULL) return;
+
+        lv_point_t vect;
+        lv_indev_get_vect(indev, &vect);
+
+        // 检测左滑手势
+        if(vect.x < -50 && !is_wifi_page_shown) {  // 如果水平移动距离小于-50
+            lv_disp_load_scr(wifi_page);  // 切换到WiFi页面
+            is_wifi_page_shown = true;
+            update_wifi_details();  // 更新WiFi信息
+        }
+    }, LV_EVENT_PRESSING, NULL);
+
     // 根据SHT30是否找到决定是否创建温湿度标签
     if (sht31_found) {
-        temp_label = lv_label_create(lv_scr_act());
+        temp_label = lv_label_create(main_page);
         lv_label_set_text(temp_label, "Temp: --.-°C");
         lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
         lv_obj_align(temp_label, LV_ALIGN_TOP_LEFT, 20, 120);
 
-        humi_label = lv_label_create(lv_scr_act());
+        humi_label = lv_label_create(main_page);
         lv_label_set_text(humi_label, "Humi: --.-%");
         lv_obj_set_style_text_font(humi_label, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(humi_label, lv_color_white(), 0);
         lv_obj_align_to(humi_label, temp_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
     }
 
-    // 创建定时器（每秒更新）
+    // 创建GPIO状态标签
+    gpio0_label = lv_label_create(main_page);
+    lv_label_set_text(gpio0_label, "GPIO0: --");
+    lv_obj_set_style_text_font(gpio0_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(gpio0_label, lv_color_white(), 0);
+    lv_obj_align(gpio0_label, LV_ALIGN_TOP_RIGHT, -20, 120);
 
+    gpio1_label = lv_label_create(main_page);
+    lv_label_set_text(gpio1_label, "GPIO1: --");
+    lv_obj_set_style_text_font(gpio1_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(gpio1_label, lv_color_white(), 0);
+    lv_obj_align_to(gpio1_label, gpio0_label, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 5);
+
+    // 创建定时器
+    update_timer = lv_timer_create(update_time, 1000, NULL);
+    lv_timer_set_repeat_count(update_timer, LV_ANIM_REPEAT_INFINITE);
+    lv_timer_ready(update_timer);
 
     // 更新温湿度
     if (sht31_found) {
         lv_timer_create(update_temp_humi, 5000, NULL);
     }
 
-    // 每30秒检查WiFi连接
-    update_timer = lv_timer_create(update_time, 1000, NULL);
-    lv_timer_set_repeat_count(update_timer, LV_ANIM_REPEAT_INFINITE);
-    lv_timer_ready(update_timer);
+    // 创建GPIO状态更新定时器（每500ms更新一次）
+    lv_timer_create(update_gpio_status, 500, NULL);
+
+    // 创建WiFi信息更新定时器（每5秒更新一次）
+    lv_timer_create([](lv_timer_t* t) {
+        if (is_wifi_page_shown) {
+            update_wifi_details();
+        }
+    }, 5000, NULL);
 
     // 内存监控
     lv_mem_monitor_t mon;
