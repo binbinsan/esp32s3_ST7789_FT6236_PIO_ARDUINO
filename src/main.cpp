@@ -8,6 +8,20 @@
 #include <Wire.h>
 #include <Adafruit_SHT31.h>
 
+// 开发板配置
+#define BOARD_ESP32S3  // 如果使用ESP32，请注释此行
+
+// I2C配置
+#ifdef BOARD_ESP32S3
+    #define I2C_SDA 3          // I2C SDA引脚
+    #define I2C_SCL 2          // I2C SCL引脚
+    #define TOUCH_SENSITIVITY 40  // 触摸灵敏度
+#else
+    #define I2C_SDA 8          // I2C SDA引脚
+    #define I2C_SCL 9          // I2C SCL引脚
+    #define TOUCH_SENSITIVITY 40  // 触摸灵敏度
+#endif
+
 // 全局变量
 bool use_24h_format = true;  // 默认使用24小时制
 bool show_date = true;       // 默认显示日期
@@ -380,19 +394,34 @@ void wifi_reconnect(){
     }
 }
 
+
 // 更新温湿度显示
 void update_temp_humi(lv_timer_t* t)
 {
+    static uint32_t last_read = 0;
+    uint32_t now = millis();
+    
+    // 限制读取频率，至少间隔2秒
+    if (now - last_read < 2000) {
+        return;
+    }
+    last_read = now;
+
     float temp = sht31.readTemperature();
     float humi = sht31.readHumidity();
-
+    
     if (!isnan(temp) && !isnan(humi)) {
         char tempStr[20];
         char humiStr[20];
         snprintf(tempStr, sizeof(tempStr), "Temp: %.1f°C", temp);
         snprintf(humiStr, sizeof(humiStr), "Humi: %.1f%%", humi);
-        lv_label_set_text(temp_label, tempStr);
-        lv_label_set_text(humi_label, humiStr);
+        if (temp_label && humi_label) {
+            lv_label_set_text(temp_label, tempStr);
+            lv_label_set_text(humi_label, humiStr);
+        }
+        Serial.printf("Temperature: %.2f°C, Humidity: %.2f%%\n", temp, humi);
+    } else {
+        Serial.println("Failed to read temperature or humidity!");
     }
 }
 
@@ -823,7 +852,29 @@ void create_wifi_scan_page() {
 void setup()
 {
     Serial.begin(115200);
+    delay(100); // 等待串口稳定
 
+    // 初始化I2C总线
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(100000);  // 设置I2C时钟频率为100kHz
+    delay(100); // 等待I2C总线稳定
+        // 初始化SHT30
+        update_boot_status("Initializing sensors...");
+        lv_timer_handler();
+        
+        // 初始化SHT30传感器
+        if (!sht31.begin(0x45)) {  // 使用正确的地址0x45
+            Serial.println("Could not find SHT31 sensor!");
+            update_boot_status("SHT30 sensor not found!");
+            lv_timer_handler();
+            delay(1000);
+        } else {
+            Serial.println("SHT31 sensor initialized successfully!");
+            // 立即读取一次温湿度，测试传感器
+            float temp = sht31.readTemperature();
+            float humi = sht31.readHumidity();
+            Serial.printf("Initial reading - Temperature: %.2f°C, Humidity: %.2f%%\n", temp, humi);
+        }
     // 初始化显示相关
     lv_init();
     tft.begin();
@@ -864,7 +915,7 @@ void setup()
     // 初始化触摸屏
     update_boot_status("Initializing touch screen...");
     lv_timer_handler();
-    if (!ts.begin(40,3,2)) {
+    if (!ts.begin(TOUCH_SENSITIVITY, I2C_SDA, I2C_SCL)) {
         update_boot_status("Touch screen init failed!");
         lv_timer_handler();
         delay(2000);
@@ -893,21 +944,12 @@ void setup()
     timeClient.begin();
     timeClient.forceUpdate();
 
-    // 初始化SHT30
-    update_boot_status("Initializing sensors...");
-    lv_timer_handler();
-    Wire.begin();
-    bool sht31_found = sht31.begin(0x45);
-    if (!sht31_found) {
-        update_boot_status("SHT30 sensor not found!");
-        lv_timer_handler();
-        delay(1000);
-    }
+
 
     // 创建所有页面
     update_boot_status("Creating interface...");
     lv_timer_handler();
-    
+
     // 创建主页面
     main_page = lv_obj_create(NULL);
     lv_obj_set_size(main_page, screenWidth, screenHeight);
@@ -958,7 +1000,7 @@ void setup()
     lv_timer_ready(update_timer);
 
     // 更新温湿度
-    if (sht31_found) {
+    if (sht31.begin(0x45)) {
         lv_timer_create(update_temp_humi, 5000, NULL);
     }
 
