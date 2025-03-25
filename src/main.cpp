@@ -132,15 +132,23 @@ void switch_to_page(lv_obj_t* page, bool animate) {
 void my_touchpad_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data) {
     if (!ts.touched()) {
         data->state = LV_INDEV_STATE_REL;
+        isTouching = false;
         return;
     }
     
     data->state = LV_INDEV_STATE_PR;
+    isTouching = true;
     
     // Get touch point
     TS_Point p = ts.getPoint();
+    
+    // 转换触摸坐标
+    //data->point.x = map(p.y, 0, 320, 0, screenWidth);  // 注意：这里x和y是交换的
+    //data->point.y = map(p.x, 0, 320, screenHeight, 0); // 并且y是反转的
     data->point.x = p.x;
     data->point.y = p.y;
+    
+    Serial.printf("Touch: x=%d, y=%d\n", data->point.x, data->point.y);
     
     if (data->point.x == 120) {
         // 切换到WiFi页面
@@ -553,23 +561,62 @@ void create_gpio_page() {
 // WiFi扫描回调函数
 static void scan_wifi_cb(lv_event_t * e) {
     Serial.println("Starting WiFi scan...");
+    
+    // 检查WiFi模式
+    Serial.printf("Current WiFi mode: %d (1=STA, 2=AP, 3=APSTA)\n", WiFi.getMode());
+    
+    // 开始扫描
+    Serial.println("Scanning networks...");
     int n = WiFi.scanNetworks();
+    Serial.printf("Scan completed. Found %d networks\n", n);
+    
     String wifi_list = "";
     
     if (n == 0) {
         wifi_list = "No networks found\n";
+        Serial.println("No networks found");
     } else {
         wifi_list = String(n) + " networks found:\n\n";
+        Serial.printf("%d networks found:\n", n);
+        
         for (int i = 0; i < n; ++i) {
+            // 获取网络信息
+            String ssid = WiFi.SSID(i);
+            int32_t rssi = WiFi.RSSI(i);
+            wifi_auth_mode_t encType = WiFi.encryptionType(i);
+            
+            // 打印调试信息
+            Serial.printf("Network %d:\n", i + 1);
+            Serial.printf("  SSID: %s\n", ssid.c_str());
+            Serial.printf("  RSSI: %d dBm\n", rssi);
+            Serial.printf("  Encryption: %d\n", encType);
+            
+            // 构建显示文本
             wifi_list += String(i + 1) + ": ";
-            wifi_list += WiFi.SSID(i) + " (";
-            wifi_list += WiFi.RSSI(i) + "dBm) ";
-            wifi_list += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "Open" : "Encrypted";
+            wifi_list += ssid + " (";
+            wifi_list += String(rssi) + "dBm) ";
+            wifi_list += (encType == WIFI_AUTH_OPEN) ? "Open" : "Encrypted";
             wifi_list += "\n";
         }
     }
     
+    // 更新UI前打印将要显示的内容
+    Serial.println("Updating WiFi list label with text:");
+    Serial.println(wifi_list);
+    
+    // 检查标签对象是否存在
+    if (wifi_list_label == NULL) {
+        Serial.println("ERROR: wifi_list_label is NULL!");
+        return;
+    }
+    
+    // 更新UI
     lv_label_set_text(wifi_list_label, wifi_list.c_str());
+    Serial.println("WiFi list label updated");
+    
+    // 强制刷新显示
+    lv_obj_invalidate(wifi_list_label);
+    Serial.println("Display invalidated for refresh");
 }
 
 // 创建WiFi扫描页面
@@ -585,29 +632,78 @@ void create_wifi_scan_page() {
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
     
-    // 创建扫描按钮
-    lv_obj_t* scan_btn = lv_btn_create(wifi_scan_page);
-    lv_obj_set_size(scan_btn, 100, 40);
-    lv_obj_align(scan_btn, LV_ALIGN_TOP_MID, 0, 50);
-    lv_obj_add_event_cb(scan_btn, scan_wifi_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* scan_label = lv_label_create(scan_btn);
-    lv_label_set_text(scan_label, "SCAN");
-    lv_obj_center(scan_label);
+    // 创建一个容器来放置WiFi列表 - 增大容器高度
+    lv_obj_t* list_cont = lv_obj_create(wifi_scan_page);
+    lv_obj_set_size(list_cont, screenWidth - 20, screenHeight - 100); // 增大高度
+    lv_obj_align(list_cont, LV_ALIGN_TOP_MID, 0, 45); // 上移
+    lv_obj_set_style_bg_color(list_cont, lv_color_black(), 0);
+    lv_obj_set_style_border_width(list_cont, 0, 0);
+    lv_obj_set_style_pad_all(list_cont, 5, 0);
     
     // 创建WiFi列表标签
-    wifi_list_label = lv_label_create(wifi_scan_page);
+    wifi_list_label = lv_label_create(list_cont);
+    lv_obj_set_width(wifi_list_label, screenWidth - 30);
     lv_obj_set_style_text_font(wifi_list_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(wifi_list_label, lv_color_white(), 0);
     lv_label_set_text(wifi_list_label, "Press SCAN to search for networks...");
-    lv_obj_align(wifi_list_label, LV_ALIGN_TOP_LEFT, 10, 100);
+    lv_label_set_long_mode(wifi_list_label, LV_LABEL_LONG_WRAP);
+    lv_obj_align(wifi_list_label, LV_ALIGN_TOP_LEFT, 0, 0);
     
-    // 创建导航提示
+    // 创建扫描按钮 - 移到右下角并缩小
+    lv_obj_t* scan_btn = lv_btn_create(wifi_scan_page);
+    lv_obj_set_size(scan_btn, 80, 40); // 缩小按钮尺寸
+    lv_obj_align(scan_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10); // 放置在右下角
+    lv_obj_add_flag(scan_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(scan_btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    
+    // 设置按钮样式
+    static lv_style_t style_btn;
+    lv_style_init(&style_btn);
+    lv_style_set_bg_color(&style_btn, lv_palette_main(LV_PALETTE_BLUE));
+    lv_style_set_bg_opa(&style_btn, LV_OPA_COVER);
+    lv_style_set_border_width(&style_btn, 2);
+    lv_style_set_border_color(&style_btn, lv_color_white());
+    lv_style_set_shadow_width(&style_btn, 5); // 减小阴影
+    lv_style_set_shadow_color(&style_btn, lv_color_white());
+    lv_style_set_shadow_opa(&style_btn, LV_OPA_50);
+    lv_style_set_pad_all(&style_btn, 5); // 减小内边距
+    lv_obj_add_style(scan_btn, &style_btn, 0);
+    
+    // 创建按钮标签
+    lv_obj_t* scan_label = lv_label_create(scan_btn);
+    lv_label_set_text(scan_label, "SCAN");
+    lv_obj_set_style_text_font(scan_label, &lv_font_montserrat_16, 0); // 减小字体
+    lv_obj_set_style_text_color(scan_label, lv_color_white(), 0);
+    lv_obj_center(scan_label);
+    
+    // 添加按钮事件回调
+    lv_obj_add_event_cb(scan_btn, [](lv_event_t * e) {
+        lv_event_code_t code = lv_event_get_code(e);
+        lv_obj_t* btn = lv_event_get_target(e);
+        
+        if(code == LV_EVENT_PRESSED) {
+            Serial.println("Scan button pressed!");
+            lv_obj_set_style_bg_color(btn, lv_palette_darken(LV_PALETTE_BLUE, 3), 0);
+            lv_obj_set_style_shadow_width(btn, 2, 0); // 按下时阴影更小
+        }
+        else if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+            Serial.println("Scan button released!");
+            lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_BLUE), 0);
+            lv_obj_set_style_shadow_width(btn, 5, 0);
+            
+            if(code == LV_EVENT_RELEASED) {
+                Serial.println("Executing WiFi scan...");
+                scan_wifi_cb(e);
+            }
+        }
+    }, LV_EVENT_ALL, NULL);
+    
+    // 创建导航提示 - 移到左下角
     lv_obj_t* hint = lv_label_create(wifi_scan_page);
-    lv_label_set_text(hint, "← Swipe right to return");
+    lv_label_set_text(hint, "← Swipe right");
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(hint, lv_color_white(), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 10, -10);
     
     // 添加滑动手势
     static lv_style_t style_trans;
@@ -619,7 +715,10 @@ void create_wifi_scan_page() {
     lv_obj_add_style(gesture_obj, &style_trans, 0);
     lv_obj_set_size(gesture_obj, screenWidth, screenHeight);
     lv_obj_align(gesture_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(gesture_obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(gesture_obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
     
+    // 添加手势事件回调
     lv_obj_add_event_cb(gesture_obj, [](lv_event_t * e) {
         lv_obj_t * obj = lv_event_get_target(e);
         lv_indev_t * indev = lv_indev_get_act();
@@ -638,12 +737,16 @@ void create_wifi_scan_page() {
         
         if (abs(gesture_distance) > GESTURE_THRESHOLD) {
             if (gesture_distance > 0 && is_wifi_scan_page_shown) {
-                // 右滑返回主页面
                 switch_to_page(main_page, false);
                 gesture_tracking = false;
             }
         }
     }, LV_EVENT_PRESSING, NULL);
+    
+    // 打印按钮位置信息（用于调试）
+    Serial.printf("Scan button position: x=%d, y=%d, width=%d, height=%d\n",
+                 lv_obj_get_x(scan_btn), lv_obj_get_y(scan_btn),
+                 lv_obj_get_width(scan_btn), lv_obj_get_height(scan_btn));
 }
 
 // 初始化函数
