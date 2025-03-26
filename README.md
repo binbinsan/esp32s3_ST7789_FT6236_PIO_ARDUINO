@@ -26,12 +26,11 @@
 - I2C SCL: GPIO2
 
 #### TFT SPI接口 (ESP32S3)
-- MOSI: GPIO7
-- SCLK: GPIO6
-- CS: GPIO10
-- DC: GPIO8
-- RST: GPIO9
-- BL: GPIO3 (背光控制，PWM)
+#define TFT_SCLK 10
+#define TFT_MOSI 11
+#define TFT_RST  14  // Reset pin (could connect to RST pin)
+#define TFT_DC   8  // Data Command control pin
+#define TFT_CS   9  // Chip select control pin
 ## 功能特点
 
 1. **时间显示**
